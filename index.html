@@ -426,7 +426,11 @@ footer p{margin:0 0 4px}
       if(!AC){
         var C=window.AudioContext||window.webkitAudioContext;if(!C)return null;
         AC=new C();master=AC.createGain();master.gain.value=.7;spk=AC.createGain();master.connect(spk);spk.connect(AC.destination);
-        try{recDest=AC.createMediaStreamDestination();master.connect(recDest)}catch(e){recDest=null}
+        try{
+          recDest=AC.createMediaStreamDestination();master.connect(recDest);
+          /* 録画用の音声を途切れさせないための、聞こえない音（スピーカーには流さない）。無音区間で音声データが抜けると動画の音がズレる */
+          var ka=AC.createOscillator(),kg=AC.createGain();ka.frequency.value=20;kg.gain.value=.0005;ka.connect(kg);kg.connect(recDest);ka.start();
+        }catch(e){recDest=null}
         noiseBuf=AC.createBuffer(1,AC.sampleRate,AC.sampleRate);var d=noiseBuf.getChannelData(0);for(var i=0;i<d.length;i++)d[i]=Math.random()*2-1;
       }
       spk.gain.value=muted?0:1;
@@ -873,7 +877,7 @@ footer p{margin:0 0 4px}
     $("recbtn").textContent=recOn?"録画：オン":"録画：オフ";$("recbtn").setAttribute("aria-pressed",String(recOn));
   }
   $("mute").addEventListener("click",function(){muted=!muted;if(spk)spk.gain.value=muted?0:1;if(muted&&!recOn)bgmStop(false);try{localStorage.setItem("kushapoi-mute",muted?"1":"0")}catch(e){}paintToggles();if(!muted)sStamp()});
-  $("recbtn").addEventListener("click",function(){recOn=!recOn;paintToggles()});
+  $("recbtn").addEventListener("click",function(){recOn=!recOn;paintToggles();if(recOn)audio() /* 録画前に音の準備を済ませておく */});
   if(canRec){$("recbtn").hidden=false;$("recnote").hidden=false}
   paintToggles();
 
