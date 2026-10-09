@@ -109,6 +109,7 @@ button:disabled{opacity:.5; cursor:default}
 .hint{font-size:.85rem; color:var(--on-mat-dim); min-height:1.4em; flex:1 1 100%; margin:0}
 
 .result{position:absolute; left:14px; right:14px; top:132px; bottom:10px; overflow:auto; color:#fff; background:rgba(31,42,68,.88); border-radius:6px; padding:12px 14px}
+.result.solid{background:#232d47}
 .rank{display:inline-block; margin:0 0 8px; padding:1px 10px; background:var(--paper); color:var(--ink); font-weight:700; font-size:.95rem}
 .vsres{margin:0 0 8px; padding-left:8px; border-left:4px solid var(--margin); font-size:.95rem}
 .result[hidden]{display:none}
@@ -185,7 +186,7 @@ footer p{margin:0 0 4px}
   <footer>
     <p id="best"></p>
     <p>書いた内容は保存も送信もされません。この画面の中だけで丸めて捨てます。シェア用の画像と投稿文にも、書いた文章は入りません。</p>
-    <p id="recnote" hidden>録画をオンにすると、投げる様子を音つきの動画で保存できます（音をオフにしていても、動画には音が入ります）。動画には書いた文字も映ります。</p>
+    <p id="recnote" hidden>録画をオンにすると、投げる様子から結果の距離と一言までを、音つきの動画で保存できます（音をオフにしていても、動画には音が入ります）。動画には書いた文字も映ります。</p>
     <p>※気分転換用のネタサイトです。実際のポイ捨てを推奨するものではありません。本物の紙はゴミ箱へ。</p>
     <p>Amazonのアソシエイトとして、当サイトは適格販売により収入を得ています。</p>
   </footer>
@@ -434,7 +435,7 @@ footer p{margin:0 0 4px}
         noiseBuf=AC.createBuffer(1,AC.sampleRate,AC.sampleRate);var d=noiseBuf.getChannelData(0);for(var i=0;i<d.length;i++)d[i]=Math.random()*2-1;
       }
       spk.gain.value=muted?0:1;
-      if(AC.state==="suspended")AC.resume();
+      if(AC.state!=="running")AC.resume(); /* iOSは共有シートなどの後に "interrupted" になる */
       return AC;
     }catch(e){return null}
   }
@@ -498,21 +499,41 @@ footer p{margin:0 0 4px}
 
   /* ---------- 録画（オンのときだけ） ---------- */
   var canRec=!!(cv.captureStream&&window.MediaRecorder),recOn=false,rec=null,recBlob=null,recTok=0;
+  /* 録画用のストリームは一度だけ作って使い回す（投げるたびに作り直すと、端末によっては2回目以降が録れない） */
+  var recVideo=null,recAV=null,recFinish=null,recErr="";
   function recStart(){
-    recBlob=null;recTok++;
+    recBlob=null;recTok++;recFinish=null;recErr="";
     if(!recOn||!canRec)return;
+    var types=['video/mp4;codecs="avc1.42E01E,mp4a.40.2"',"video/mp4;codecs=avc1.42E01E,mp4a.40.2","video/mp4;codecs=avc1,mp4a.40.2","video/mp4","video/webm;codecs=vp9,opus","video/webm;codecs=vp8,opus","video/webm"];
+    var mime="",tok=recTok,chunks=[],r=null,done=false,i;
+    try{for(i=0;i<types.length;i++)if(MediaRecorder.isTypeSupported(types[i])){mime=types[i];break}}catch(e){}
+    var opt=mime?{mimeType:mime,videoBitsPerSecond:5e6,audioBitsPerSecond:128000}:undefined;
     try{
-      var types=["video/mp4;codecs=avc1,mp4a.40.2","video/mp4","video/webm;codecs=vp9,opus","video/webm;codecs=vp8,opus","video/webm"],mime="",tok=recTok,chunks=[];
-      var stream=cv.captureStream(30);
-      if(recDest){try{stream=new MediaStream(stream.getVideoTracks().concat(recDest.stream.getAudioTracks()))}catch(e){}}
-      for(var i=0;i<types.length;i++)if(MediaRecorder.isTypeSupported(types[i])){mime=types[i];break}
-      var r=new MediaRecorder(stream,mime?{mimeType:mime,videoBitsPerSecond:5e6,audioBitsPerSecond:128000}:undefined);
-      r.ondataavailable=function(e){if(e.data&&e.data.size)chunks.push(e.data)};
-      r.onstop=function(){if(tok!==recTok)return;recBlob=new Blob(chunks,{type:(r.mimeType||mime||"video/webm").split(";")[0]});$("savevid").hidden=false};
-      r.start();rec=r;
-    }catch(e){rec=null}
+      if(!recVideo)recVideo=cv.captureStream(30);
+      if(!recAV&&recDest)recAV=new MediaStream(recVideo.getVideoTracks().concat(recDest.stream.getAudioTracks()));
+    }catch(e){recErr=String(e&&e.message||e)}
+    /* 音つきで始められなければ、映像だけで録る */
+    var cands=[recAV,recVideo];
+    for(i=0;i<cands.length&&!r;i++){
+      if(!cands[i])continue;
+      try{r=new MediaRecorder(cands[i],opt);r.start(1000)}catch(e){recErr=String(e&&e.message||e);r=null}
+    }
+    if(!r)return;
+    var fin=function(){
+      if(done||tok!==recTok)return;done=true;
+      if(!chunks.length){$("sharehint").textContent="この端末では録画データを作れませんでした。"+(recErr?"（"+recErr+"）":"");return}
+      recBlob=new Blob(chunks,{type:(r.mimeType||mime||"video/webm").split(";")[0]});
+      $("savevid").hidden=false;$("sharehint").textContent="動画の準備ができました。";
+    };
+    r.ondataavailable=function(e){if(e.data&&e.data.size)chunks.push(e.data)};
+    r.onstop=fin;r.onerror=function(e){recErr=String(e&&e.error&&e.error.message||"録画エラー")};
+    recFinish=fin;rec=r;
   }
-  function recStop(){var r=rec;rec=null;if(r&&r.state!=="inactive")try{r.stop()}catch(e){}}
+  function recStop(){
+    var r=rec,fin=recFinish;rec=null;if(!r)return;
+    if(r.state!=="inactive"){try{r.stop()}catch(e){}}
+    if(fin)setTimeout(fin,2000); /* 停止の通知が来ない端末向けの保険 */
+  }
 
   function speedLines(X,Y,a){
     if(a<=.02||reduce)return;
@@ -784,6 +805,26 @@ footer p{margin:0 0 4px}
       });
     });
   }
+  /* 録画用：結果（称号・距離・一言）をキャンバスにも描く。画面上では同じ位置の結果パネルの下に隠れる */
+  function endCard(al){
+    var x=14,y=132,w=W-28,h=H-142,px=x+14,i;
+    ctx.save();ctx.globalAlpha=al;
+    ctx.fillStyle="#232d47";ctx.fillRect(x,y,w,h);
+    ctx.textAlign="left";ctx.textBaseline="alphabetic";
+    var tag=last.rank+"　着地点："+last.land;
+    ctx.font='700 15px "Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,system-ui,sans-serif';
+    var tw=Math.min(w-28,ctx.measureText(tag).width+20);
+    ctx.fillStyle="#f7e98e";ctx.fillRect(px,y+14,tw,26);ctx.fillStyle=INK;ctx.fillText(tag,px+10,y+33,tw-20);
+    var num=last.d.toFixed(1);ctx.fillStyle="#fff";ctx.font="58px "+DISP;ctx.fillText(num,px,y+104);
+    var nw=ctx.measureText(num).width;ctx.font="24px "+DISP;ctx.fillText("m",px+nw+6,y+104);
+    ctx.font='17px "Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,system-ui,sans-serif';
+    var lines=[],cur="",mw=w-28;
+    Array.from(last.verdict||"").forEach(function(ch){if(cur&&ctx.measureText(cur+ch).width>mw){lines.push(cur);cur=ch}else cur+=ch});
+    if(cur)lines.push(cur);
+    for(i=0;i<lines.length;i++)ctx.fillText(lines[i],px,y+144+i*28);
+    ctx.font="13px "+DISP;ctx.fillStyle="rgba(255,255,255,.7)";ctx.textAlign="right";ctx.fillText("#くしゃポイ",x+w-14,y+h-14);
+    ctx.restore();
+  }
   function showResult(){
     var d=res.d;phase="result";last={d:d,rank:pick(RANKS,d),land:pick(LANDS,d)};
     $("rank").textContent=last.rank+"　着地点："+last.land;
@@ -801,16 +842,19 @@ footer p{margin:0 0 4px}
     $("care").hidden=!res.care;showAds(d,res.care);
     var best=loadBest();
     if(d>best){saveBest(d);if(best)$("verdict").textContent+="　記録更新です。"}
-    showBest();$("sharehint").textContent="";
+    last.verdict=$("verdict").textContent;showBest();$("sharehint").textContent=rec?"動画を書き出し中です（約3秒）。":(recOn&&canRec?"録画を開始できませんでした。"+(recErr?"（"+recErr+"）":""):"");
     $("result").hidden=false;$("result").scrollTop=0;$("share").hidden=false;btn.hidden=true;$("again").hidden=false;
     try{$("again").focus({preventScroll:true})}catch(e){}
-    if(rec)run(600,function(){draw()},recStop);
+    if(rec){
+      $("result").classList.add("solid");var c0=performance.now();
+      run(2800,function(){draw();endCard(Math.min(1,(performance.now()-c0)/300))},recStop);
+    }
   }
   function reset(){
     cancelAnimationFrame(raf);stopIdle();recStop();recTok++;recBlob=null;
     phase="write";res=null;last=null;secrets=[];bgmStop(false);pops.length=0;fx.parts.length=0;fx.sparks.length=0;fx.rings.length=0;fx.warp=0;fx.flash=0;fx.night=false;fx.lines=0;fx.glow=0;fx.meter="0.0";
     fadeT0=0;stage.classList.remove("live","play");ball=null;sprite=null;mesh=null;cam.z=0;cam.y=CH;z0=1.5;step=1;draw();
-    $("ads").hidden=true;$("result").hidden=true;$("share").hidden=true;$("savevid").hidden=true;$("again").hidden=true;$("topics").hidden=false;
+    $("ads").hidden=true;$("result").hidden=true;$("result").classList.remove("solid");$("share").hidden=true;$("savevid").hidden=true;$("again").hidden=true;$("topics").hidden=false;
     btn.hidden=false;setBtn("丸めて投げる");$("hint").textContent="";paper.classList.remove("gone");
     ta.value="";ta.focus();
   }
@@ -888,6 +932,8 @@ footer p{margin:0 0 4px}
   });
   window.addEventListener("pointerup",function(e){if(pd&&phase==="ready"&&e.clientY-pd.y<-30)launch();pd=null});
   window.addEventListener("pointercancel",function(){pd=null});
+  /* 共有シートや別アプリから戻ったあと、次に画面に触れた時点で音を復帰させる */
+  document.addEventListener("pointerdown",function(){if(AC&&AC.state!=="running"){try{AC.resume()}catch(e){}}},true);
   $("again").addEventListener("click",reset);
   ta.addEventListener("keydown",function(e){if(e.key==="Enter"&&(e.ctrlKey||e.metaKey)){e.preventDefault();if(phase==="write")start()}});
   ta.addEventListener("input",function(){$("hint").textContent=""});
