@@ -157,6 +157,7 @@ footer p{margin:0 0 4px}
       <div class="dist"><span id="dist">0.0</span><small>m</small></div>
       <p class="verdict" id="verdict"></p>
       <p class="vsres" id="vsres" hidden></p>
+      <p class="chiplabel" id="flick" hidden></p>
       <p class="chiplabel" id="secret" hidden></p>
       <p class="chiplabel" id="care" hidden>しんどさが続くときは、誰かに話すのも手です。</p>
       <p class="chiplabel" id="chiplabel"></p>
@@ -259,7 +260,7 @@ footer p{margin:0 0 4px}
   function scene(){
     var og="#ffffff",fa=fadeT0?(reduce?1:Math.min(1,(performance.now()-fadeT0)/FADE)):0;
     ctx.clearRect(0,0,W,H);
-    if(fa<=0)return;
+    if(fa<=0){matFill();return}
     ctx.fillStyle=fx.night?"#131c3a":css("--sky");ctx.fillRect(0,0,W,hy);
     if(fx.warp>.01){var wg=ctx.createLinearGradient(0,0,0,hy);wg.addColorStop(0,"rgba(16,12,52,"+fx.warp+")");wg.addColorStop(1,"rgba(190,60,120,"+(fx.warp*.75)+")");ctx.fillStyle=wg;ctx.fillRect(0,0,W,hy)}
     if(fx.night||fx.warp>.3){ctx.fillStyle="#fff";for(var sN=0;sN<28;sN++)ctx.fillRect((sN*97+13)%W,(sN*53+7)%(hy-8),1.6,1.6)}
@@ -305,6 +306,12 @@ footer p{margin:0 0 4px}
       }
     }
     if(fa<1){ctx.globalCompositeOperation="destination-in";ctx.fillStyle="rgba(0,0,0,"+fa+")";ctx.fillRect(0,0,W,H);ctx.globalCompositeOperation="source-over"}
+    matFill();
+  }
+  /* 録画中だけ、透明な部分をページの地の色で埋める。動画は透明を扱えず、半透明の部分の色が濃く化けるため */
+  function matFill(){
+    if(!fx.bg)return;
+    ctx.globalCompositeOperation="destination-over";ctx.fillStyle=css("--mat");ctx.fillRect(0,0,W,H);ctx.globalCompositeOperation="source-over";
   }
   function drawSprite(x,y,sc,rot){
     if(!sprite)return;
@@ -349,7 +356,7 @@ footer p{margin:0 0 4px}
     var t0=performance.now();
     (function fr(now){var el=Math.max(0,now-t0),u=Math.min(1,el/dur);stepFn(u,el);overlay();if(u<1)raf=requestAnimationFrame(fr);else if(done)done()})(t0);
   }
-  var stage=cv.parentNode,fx={lines:0,glow:0,trail:[],dust:null,parts:[],pt:0,flash:0,night:false,meter:"0.0",sparks:[],rings:[],warp:0,hue:false,mk:0,lastPass:0,lastShake:0,ot:0};
+  var stage=cv.parentNode,fx={lines:0,glow:0,trail:[],dust:null,parts:[],pt:0,flash:0,night:false,meter:"0.0",sparks:[],rings:[],warp:0,hue:false,mk:0,lastPass:0,lastShake:0,ot:0,bg:false};
   function rnd(a){return (Math.random()*2-1)*a}
   function buzz(ms){try{if(navigator.vibrate)navigator.vibrate(ms)}catch(e){}}
   function shake(a,ms){
@@ -527,7 +534,7 @@ footer p{margin:0 0 4px}
     };
     r.ondataavailable=function(e){if(e.data&&e.data.size)chunks.push(e.data)};
     r.onstop=fin;r.onerror=function(e){recErr=String(e&&e.error&&e.error.message||"録画エラー")};
-    recFinish=fin;rec=r;
+    recFinish=fin;rec=r;fx.bg=true;
   }
   function recStop(){
     var r=rec,fin=recFinish;rec=null;if(!r)return;
@@ -785,11 +792,14 @@ footer p{margin:0 0 4px}
   }
   function ready(){
     buildSprite();phase="ready";readyAt=performance.now();queued=0;
-    setBtn("投げる！");$("hint").textContent="紙を上にフリックするか、ボタンで投げます。";
+    setBtn("投げる！");$("hint").textContent="紙を上にフリックするか、ボタンで投げます。強くフリックするほど遠くへ飛びます。";
     idle(function(el){scene();drawSprite(mesh.mx+Math.sin(el*.09)*1.2,mesh.my+Math.cos(el*.011)*4,1,0);cue("上にフリックで投げろ！",el)});
   }
-  function launch(){
+  function launch(v){
     if(phase!=="ready"||performance.now()-readyAt<300)return;
+    /* フリックの速さ（px/ミリ秒）で飛距離を0.9〜1.3倍にする。ボタンで投げたときは等倍 */
+    res.mult=0;
+    if(typeof v==="number"){res.mult=.9+.4*Math.max(0,Math.min(1,(v-.3)/2.2));res.d=Math.min(9999,res.d*res.mult)}
     phase="fly";stopIdle();stage.classList.remove("play");setBtn("飛行中…",true);$("hint").textContent="";
     pop("ググッ…",mesh.mx,mesh.my-120,26,-4);sCharge();
     run(reduce?10:340,function(u){
@@ -797,6 +807,7 @@ footer p{margin:0 0 4px}
       drawSprite(mesh.mx+rnd(j),mesh.my+44*e+rnd(j),1+.95*e,-.5*e);
     },function(){
       fx.flash=reduce?0:performance.now();shake(16,340);buzz(70);sLaunch();pop("ドンッ!!",cx,hy+120,64,-6);
+      if(res.mult>=1.2)pop("フルパワー!!",cx,hy+52,30,4);
       var mine=res;
       secrets.forEach(function(S,i){setTimeout(function(){if(phase!=="fly"||res!==mine)return;burst(S[1]);pop(S[2],cx,hy+200+i*26,28,i?5:-5)},280+i*700)});
       fly(res.d,mesh.mx,mesh.my+44,BR*1.95,function(){
@@ -835,6 +846,8 @@ footer p{margin:0 0 4px}
       li.textContent=h.w+(h.c>1?" ×"+h.c:"");if(h.pt<0)li.className="minus";ul.appendChild(li)});
     if(res.hits.length>8){var more=document.createElement("li");more.className="minus";more.textContent="ほか"+(res.hits.length-8);ul.appendChild(more)}
     $("chiplabel").textContent=res.hits.length?"飛距離に効いた言葉（点線はブレーキ）":"辞書にない言葉でしたが、ちゃんと受け取って投げました。";
+    $("flick").hidden=!res.mult;
+    if(res.mult)$("flick").textContent="フリックの勢い：×"+res.mult.toFixed(2)+(res.mult>=1.2?"（フルパワー）":"");
     $("secret").hidden=!secrets.length;
     if(secrets.length)$("secret").textContent="隠し演出を発見："+secrets.map(function(S){return S[1]+" "+S[2]}).join("　");
     $("vsres").hidden=!vs;
@@ -852,7 +865,7 @@ footer p{margin:0 0 4px}
   }
   function reset(){
     cancelAnimationFrame(raf);stopIdle();recStop();recTok++;recBlob=null;
-    phase="write";res=null;last=null;secrets=[];bgmStop(false);pops.length=0;fx.parts.length=0;fx.sparks.length=0;fx.rings.length=0;fx.warp=0;fx.flash=0;fx.night=false;fx.lines=0;fx.glow=0;fx.meter="0.0";
+    phase="write";res=null;last=null;secrets=[];bgmStop(false);pops.length=0;fx.parts.length=0;fx.sparks.length=0;fx.rings.length=0;fx.warp=0;fx.flash=0;fx.night=false;fx.bg=false;fx.lines=0;fx.glow=0;fx.meter="0.0";
     fadeT0=0;stage.classList.remove("live","play");ball=null;sprite=null;mesh=null;cam.z=0;cam.y=CH;z0=1.5;step=1;draw();
     $("ads").hidden=true;$("result").hidden=true;$("result").classList.remove("solid");$("share").hidden=true;$("savevid").hidden=true;$("again").hidden=true;$("topics").hidden=false;
     btn.hidden=false;setBtn("丸めて投げる");$("hint").textContent="";paper.classList.remove("gone");
@@ -928,9 +941,19 @@ footer p{margin:0 0 4px}
   btn.addEventListener("click",function(){if(phase==="write")start();else if(phase==="crumple")tap();else if(phase==="ready")launch()});
   stage.addEventListener("pointerdown",function(e){
     if(phase==="crumple"){e.preventDefault();tap()}
-    else if(phase==="ready"){e.preventDefault();pd={y:e.clientY}}
+    else if(phase==="ready"){e.preventDefault();pd={y:e.clientY,pts:[{y:e.clientY,t:performance.now()}]}}
   });
-  window.addEventListener("pointerup",function(e){if(pd&&phase==="ready"&&e.clientY-pd.y<-30)launch();pd=null});
+  window.addEventListener("pointermove",function(e){
+    if(!pd)return;var now=performance.now();pd.pts.push({y:e.clientY,t:now});
+    while(pd.pts.length>1&&now-pd.pts[0].t>120)pd.pts.shift();
+  });
+  window.addEventListener("pointerup",function(e){
+    if(pd&&phase==="ready"&&e.clientY-pd.y<-30){
+      var o=pd.pts[0],dt=Math.max(16,performance.now()-o.t);
+      launch(Math.max(0,o.y-e.clientY)/dt); /* 指を離す直前およそ0.1秒の速さ */
+    }
+    pd=null;
+  });
   window.addEventListener("pointercancel",function(){pd=null});
   /* 共有シートや別アプリから戻ったあと、次に画面に触れた時点で音を復帰させる */
   document.addEventListener("pointerdown",function(){if(AC&&AC.state!=="running"){try{AC.resume()}catch(e){}}},true);
